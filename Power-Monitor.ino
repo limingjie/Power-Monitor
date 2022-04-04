@@ -9,8 +9,8 @@
 
 // https://github.com/Zanduino/INA/blob/master/examples/DisplayReadings/DisplayReadings.ino
 const uint32_t SERIAL_SPEED    = 115200;  ///< Use fast serial speed
-const uint32_t SHUNT_MICRO_OHM = 10000;   ///< Shunt resistance in Micro-Ohm, e.g. 100000 is 0.1 Ohm
-const uint16_t MAXIMUM_AMPS    = 8;       ///< Max expected amps, clamped from 1A to a max of 1022A
+const uint32_t SHUNT_MICRO_OHM = 100000;  ///< Shunt resistance in Micro-Ohm, e.g. 100000 is 0.1 Ohm
+const uint16_t MAXIMUM_AMPS    = 1;       ///< Max expected amps, clamped from 1A to a max of 1022A
 uint8_t        devicesFound    = 0;       ///< Number of INAs found
 
 INA_Class INA;
@@ -49,7 +49,7 @@ void setup()
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
     tft.loadFont(iosevka15);
     tft.setTextDatum(TL_DATUM);
-    // tft.setTextPadding(10);
+    tft.setTextPadding(180);
 
     // Use GPIO12 as input consider display does not need MISO,
     // only works after SPI & tft are both started.
@@ -66,9 +66,9 @@ void setup()
     Serial.print(F(" - Detected "));
     Serial.print(devicesFound);
     Serial.println(F(" INA devices on the I2C bus"));
-    INA.setBusConversion(1100);             // Maximum conversion time 8.244ms
-    INA.setShuntConversion(1100);           // Maximum conversion time 8.244ms
-    INA.setAveraging(128);                  // Average each reading n-times
+    INA.setBusConversion(1000);             // Maximum conversion time 8.244ms
+    INA.setShuntConversion(1000);           // Maximum conversion time 8.244ms
+    INA.setAveraging(32);                   // Average each reading n-times
     INA.setMode(INA_MODE_CONTINUOUS_BOTH);  // Bus/shunt measured continuously
     INA.alertOnBusOverVoltage(true, 3500);  // Trigger alert if over 3.5V on bus
 }
@@ -83,11 +83,16 @@ void loop()
      * is used to convert the floating point numbers into formatted strings.
      * @return   void
      */
-    static uint16_t loopCounter = 0;     // Count the number of iterations
-    static char     sprintfBuffer[100];  // Buffer to format output
-    static uint16_t busMilliVolts;
-    static int32_t  shuntMicroVolts, busMicroAmps;
-    static int64_t  busMicroWatts;
+    static uint16_t      loopCounter = 0;     // Count the number of iterations
+    static char          sprintfBuffer[100];  // Buffer to format output
+    static uint16_t      busMilliVolts;
+    static int32_t       shuntMicroVolts, busMicroAmps;
+    static int64_t       busMicroWatts;
+    static int64_t       microWattMills = 0;
+    static unsigned long startMillis    = millis();
+    static unsigned long lastMillis     = millis();
+    static unsigned long currentMillis;
+    static unsigned long deltaMillis;
 
     Serial.print(F("Nr Adr Type   Bus      Shunt       Bus         Bus\n"));
     Serial.print(F("== === ====== ======== =========== =========== ===========\n"));
@@ -97,7 +102,17 @@ void loop()
         shuntMicroVolts = INA.getShuntMicroVolts(i);
         busMicroAmps    = INA.getBusMicroAmps(i);
         busMicroWatts   = INA.getBusMicroWatts(i);
-        sprintf(sprintfBuffer, "%2d %3d %s %7.4fV %9.4fmV %9.4fmA %9.4fmW\n shunt %d", i + 1, INA.getDeviceAddress(i),
+        // if (busMicroAmps < 0)
+        // {
+        //     busMicroAmps = 0;
+        // }
+        currentMillis = millis();
+        deltaMillis   = currentMillis - lastMillis;
+        lastMillis    = currentMillis;
+        // microWattMills += busMicroWatts * (currentMillis - lastMillis);
+        microWattMills += int64_t(busMilliVolts) * int64_t(busMicroAmps) * int64_t(deltaMillis) / 1000;
+
+        sprintf(sprintfBuffer, "%2d %3d %s %7.4fV %9.4fmV %9.4fmA %9.4fmW shunt %d\n", i + 1, INA.getDeviceAddress(i),
                 INA.getDeviceName(i), busMilliVolts / 1000.0, shuntMicroVolts / 1000.0, busMicroAmps / 1000.0,
                 busMicroWatts / 1000.0, shuntMicroVolts);
         Serial.print(sprintfBuffer);
@@ -105,24 +120,31 @@ void loop()
         sprintf(sprintfBuffer, "0x%2X %s\n", INA.getDeviceAddress(i), INA.getDeviceName(i));
         tft.setTextColor(TFT_WHITE, TFT_BLACK);
         tft.drawString(sprintfBuffer, 0, 0);
-        sprintf(sprintfBuffer, "Bus   = %9.5fV\n", busMilliVolts / 1000.0);
+        sprintf(sprintfBuffer, "%8.3fV %8.3fmA\n", busMilliVolts / 1000.0, busMicroAmps / 1000.0);
         tft.setTextColor(TFT_RED, TFT_BLACK);
         tft.drawString(sprintfBuffer, 0, 16);
-        sprintf(sprintfBuffer, "Shunt = %9.5fmV\n", shuntMicroVolts / 1000.0);
+        // sprintf(sprintfBuffer, "Shunt = %9.5fmV\n", shuntMicroVolts / 1000.0);
+        sprintf(sprintfBuffer, "%8.2fmW %8.2fmW\n", busMicroWatts / 1000.0,
+                int64_t(busMilliVolts) * int64_t(busMicroAmps) / 1000000.0);
         tft.setTextColor(TFT_GREEN, TFT_BLACK);
         tft.drawString(sprintfBuffer, 0, 32);
-        sprintf(sprintfBuffer, "Amps  = %9.5fmA\n", busMicroAmps / 1000.0);
+        // 1mWh = 1000uW x 3600 x 1000ms = 3.6 x 10^9uWh
+        sprintf(sprintfBuffer, "%8.3fmWh %3dm%04.1fs\n", microWattMills / 3600000000.0,
+                (currentMillis - startMillis) / 60000, (currentMillis - startMillis) % 60000 / 1000.0);
         tft.setTextColor(TFT_YELLOW, TFT_BLACK);
         tft.drawString(sprintfBuffer, 0, 48);
+        sprintf(sprintfBuffer, "%9.2fohm\n", float(busMilliVolts) / busMicroAmps * 1000.0);
+        tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+        tft.drawString(sprintfBuffer, 0, 64);
     }  // for-next each INA device loop
-    Serial.println();
-    Serial.print(F("Loop iteration "));
-    Serial.print(++loopCounter);
-    Serial.print(F("\n\n"));
+    // Serial.println();
+    // Serial.print(F("Loop iteration "));
+    // Serial.print(++loopCounter);
+    // Serial.print(F("\n\n"));
 
-    sprintf(sprintfBuffer, "Loop = %d\n", loopCounter);
-    tft.setTextColor(TFT_BLUE, TFT_BLACK);
-    tft.drawString(sprintfBuffer, 0, 64);
+    // sprintf(sprintfBuffer, "Loop = %d\n", loopCounter);
+    // tft.setTextColor(TFT_BLUE, TFT_BLACK);
+    // tft.drawString(sprintfBuffer, 0, 64);
 
     if (button.toggled())
     {
