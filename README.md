@@ -7,6 +7,8 @@ Monitor the power consumption of ESP32 & ESP8266 devices and figure out how to s
 - Move to INA219
   ![INA219 on Breadboard](INA219%20on%20Breadboard.webp)
   ![INA219 with DMMs](INA219%20with%20DMMs.webp)
+  ![Wiring](INA219%20BreadBoard%20Wiring.jpg)
+  ![UI](INA219%20Power%20Monitor%20UI.jpg)
 
 ## Plan
 
