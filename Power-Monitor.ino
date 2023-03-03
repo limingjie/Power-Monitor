@@ -5,13 +5,14 @@
 // #include <Button.h>
 
 // The max shunt voltage of INA219 is +/- 320mv, with a 0.1 Ohm shunt resister, the max current is 0.32/0.1 = 3.2A.
-// The Zanduino/INA library automatically set the gain bases on shunt resister and max current, the code can be found in `INA_Class::initDevice()`
+// The Zanduino/INA library automatically set the gain bases on shunt resister and max current, the code can be found in
+// `INA_Class::initDevice()`
 const uint32_t SERIAL_SPEED    = 115200;  ///< Use fast serial speed
 const uint32_t SHUNT_MICRO_OHM = 100000;  ///< Shunt resistance in Micro-Ohm, e.g. 100000 is 0.1 Ohm
 const uint16_t MAXIMUM_AMPS    = 3;       ///< Max expected amps, clamped from 1A to a max of 1022A
 uint8_t        devicesFound    = 0;       ///< Number of INAs found
 
-INA_Class INA;
+INA_Class    INA;
 Arduino_GFX *gfx;
 // Button    button(D6);  // GPIO12
 
@@ -19,12 +20,21 @@ void setup()
 {
     Serial.begin(SERIAL_SPEED);
 
+    // LCD backlight
+    pinMode(D0, OUTPUT);
+    digitalWrite(D0, HIGH);
     // Init LCD
-    Arduino_DataBus *bus = new Arduino_HWSPI(D3, D8);
-    gfx = new Arduino_SSD1283A(bus, D6, 2);
+    Arduino_DataBus *bus = new Arduino_HWSPI(D3 /* DC */, D8 /* CS */);
+    gfx                  = new Arduino_SSD1283A(bus, D6 /* RESET */, 2 /* Rotation */);
     gfx->begin();
+    gfx->setTextWrap(false);
     gfx->fillScreen(BLACK);
-    analogWrite(D0, 128);  // GPIO16
+    gfx->fillRect(0, 0, 130, 10, BLUE);  // Top bar
+    gfx->setTextSize(1);
+    gfx->setCursor(33, 1);
+    gfx->setTextColor(WHITE);
+    gfx->print("POWER METER");
+    gfx->fillRect(0, 120, 130, 10, GREEN);  // Foot bar
 
     // Use GPIO12 as input consider display does not need MISO,
     // only works after SPI & tft are both started.
@@ -51,18 +61,11 @@ void setup()
 
 void loop()
 {
-    /*!
-     * @brief    Arduino method for the main program loop
-     * @details  This is the main program for the Arduino IDE, it is an infinite loop and keeps on
-     * repeating. In order to format the output use is made of the "sprintf()" function, but in the
-     * Arduino implementation it has no support for floating point output, so the "dtostrf()" function
-     * is used to convert the floating point numbers into formatted strings.
-     * @return   void
-     */
-    static uint16_t      loopCounter = 0;     // Count the number of iterations
+    // static uint16_t      loopCounter = 0;     // Count the number of iterations
     static char          sprintfBuffer[100];  // Buffer to format output
     static uint16_t      busMilliVolts;
-    static int32_t       shuntMicroVolts, busMicroAmps;
+    static int32_t       shuntMicroVolts;
+    static int32_t       busMicroAmps;
     static int64_t       busMicroWatts;
     static int64_t       microWattMills = 0;
     static unsigned long startMillis    = millis();
@@ -80,15 +83,17 @@ void loop()
         busMicroWatts   = INA.getBusMicroWatts(i);
 
         // There is a slight skew when there is no power or no load. Partially fix it.
-        // By doing this, the negative current cannot be measured, consider INA219 is not a full bi-direction power measurement IC.
-        if (busMilliVolts == 0 || shuntMicroVolts < 0)
-        {
-            shuntMicroVolts = busMicroAmps = busMicroWatts = 0;
-        }
+        // By doing this, the negative current cannot be measured, consider INA219 is not a full bi-direction power
+        // measurement IC.
+        // if (busMilliVolts == 0 || shuntMicroVolts < 0)
+        // {
+        //     shuntMicroVolts = busMicroAmps = busMicroWatts = 0;
+        // }
 
         currentMillis = millis();
         deltaMillis   = currentMillis - lastMillis;
         lastMillis    = currentMillis;
+        // Computer power consumption
         // microWattMills += busMicroWatts * (currentMillis - lastMillis);
         microWattMills += int64_t(busMilliVolts) * int64_t(busMicroAmps) * int64_t(deltaMillis) / 1000;
 
@@ -97,54 +102,81 @@ void loop()
                 busMicroWatts / 1000.0, shuntMicroVolts);
         Serial.print(sprintfBuffer);
 
-        gfx->setCursor(0, 0);
-        gfx->fillRect(0, 0, 80, 10, BLACK);
-        gfx->setTextColor(RED);
-        gfx->printf("0x%2X %s\n", INA.getDeviceAddress(i), INA.getDeviceName(i));
+        gfx->setTextSize(2);
 
-        gfx->setCursor(0, 16);
-        gfx->fillRect(48, 16, 84, 10, BLACK);
-        gfx->setTextColor(YELLOW);
-        gfx->printf("VOL.    %9.3f V", busMilliVolts / 1000.0);
+        gfx->setCursor(6, 15);
+        gfx->setTextColor(MAGENTA, BLACK);
+        gfx->printf("%8.3f", busMilliVolts / 1000.0);
+        gfx->setCursor(108, 15);
+        gfx->print("V");
 
-        gfx->setCursor(0, 32);
-        gfx->fillRect(48, 32, 84, 10, BLACK);
-        gfx->setTextColor(RED);
-        gfx->printf("CURRENT %9.3f mA", busMicroAmps / 1000.0);
-        
-        gfx->setCursor(0, 48);
-        gfx->fillRect(48, 48, 84, 10, BLACK);
-        gfx->setTextColor(GREEN);
+        gfx->setCursor(6, 35);
+        gfx->setTextColor(YELLOW, BLACK);
+        if (busMicroAmps > 1e6)
+        {
+            gfx->printf("%8.3f", busMicroAmps / 1e6);
+            gfx->setCursor(108, 35);
+            gfx->print("A ");
+        }
+        else
+        {
+            gfx->printf("%8.3f", busMicroAmps / 1000.0);
+            gfx->setCursor(108, 35);
+            gfx->print("mA");
+        }
+
+        gfx->setCursor(6, 55);
+        gfx->setTextColor(RED, BLACK);
+        if (busMicroWatts > 1e6)
+        {
+            gfx->printf("%8.3f", busMicroWatts / 1e6);
+            gfx->setCursor(108, 55);
+            gfx->print("W ");
+        }
+        else
+        {
+            gfx->printf("%8.3f", busMicroWatts / 1000.0);
+            gfx->setCursor(108, 55);
+            gfx->print("mW");
+        }
+
+        gfx->setTextSize(1);
+
+        gfx->setCursor(0, 75);
+        gfx->setTextColor(CYAN, BLACK);
+        // 1mWh = 1000uW x 3600 x 1000ms = 3.6 x 10^9uWh
+        if (microWattMills < 3.6e12)
+        {
+            gfx->printf("TOTAL   %9.3f mWh", microWattMills / 3.6e9);
+        }
+        else
+        {
+            gfx->printf("TOTAL   %9.3f Wh ", microWattMills / 3.6e12);
+        }
+
+        gfx->setCursor(0, 87);
+        gfx->setTextColor(MAGENTA, BLACK);
         gfx->printf("SHUNT   %9.3f mV", shuntMicroVolts / 1000.0);
 
-        gfx->setCursor(0, 64);
-        gfx->fillRect(48, 64, 84, 10, BLACK);
-        gfx->setTextColor(CYAN);
-        gfx->printf("POWER   %9.3f mW", busMicroWatts / 1000.0);
-
-        // 1mWh = 1000uW x 3600 x 1000ms = 3.6 x 10^9uWh
-        gfx->setCursor(0, 80);
-        gfx->fillRect(48, 80, 84, 10, BLACK);
-        gfx->setTextColor(MAGENTA);
-        gfx->printf("TOTAL   %9.3f mWh", microWattMills / 3600000000.0);
-
-        gfx->setCursor(0, 96);
-        gfx->fillRect(48, 96, 84, 10, BLACK);
-        gfx->setTextColor(ORANGE);
+        gfx->setCursor(0, 99);
+        gfx->setTextColor(ORANGE, BLACK);
         if (busMicroAmps == 0)
         {
-            gfx->print("R               - ohm\n");
+            gfx->print("R               - ohm");
         }
-        else 
+        else
         {
-            gfx->printf("R       %9.3f ohm\n", float(busMilliVolts) / busMicroAmps * 1000.0);
+            gfx->printf("R       %9.3f ohm", float(busMilliVolts) / busMicroAmps * 1000.0);
         }
- 
-        gfx->setCursor(0, 112);
-        gfx->fillRect(30, 112, 102, 10, BLACK);
-        gfx->setTextColor(WHITE);
-        gfx->printf("TIME %4d m %5.2f s\n", (currentMillis - startMillis) / 60000, (currentMillis - startMillis) % 60000 / 1000.0);
 
+        gfx->setCursor(0, 110);
+        gfx->setTextColor(WHITE, BLACK);
+        gfx->printf("TIME  %6lum %6.3fs", (currentMillis - startMillis) / 60000,
+                    (currentMillis - startMillis) % 60000 / 1000.0);
+
+        gfx->setCursor(33, 121);
+        gfx->setTextColor(BLACK);
+        gfx->printf("0x%2X %s   ", INA.getDeviceAddress(i), INA.getDeviceName(i));
     }  // for-next each INA device loop
 
     // if (button.toggled())
